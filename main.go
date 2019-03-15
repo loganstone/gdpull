@@ -20,12 +20,12 @@ import (
 	drive "google.golang.org/api/drive/v3"
 )
 
-const maxGoroutineForDownload = 5
+const maxDownloadAtOnce = 5
 
-var re *regexp.Regexp
+var regexFilter *regexp.Regexp
 var srv *drive.Service
-var filteredFilesGroup []map[string]string
-var totalMatchesCount int
+var foundFiles map[string]string
+var downloadQueue chan bool
 
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
@@ -86,8 +86,8 @@ func init() {
 	if len(os.Args) < 2 {
 		log.Fatal("enter target file\n")
 	}
-	filteredFilesGroup = make([]map[string]string, 5)
-	totalMatchesCount = 0
+	foundFiles = make(map[string]string)
+	downloadQueue = make(chan bool, maxDownloadAtOnce)
 }
 
 func download(srv *drive.Service, id string, name string) error {
@@ -120,26 +120,22 @@ func procPage(r *drive.FileList) error {
 		return errors.New("no files found")
 	}
 
-	filteredFiles := make(map[string]string)
-	idx := 0
-
-	for _, i := range r.Files {
-		if re.MatchString(i.Name) {
-			filteredFiles[i.Id] = i.Name
-			idx++
-			totalMatchesCount++
-			if idx == maxGoroutineForDownload {
-				filteredFilesGroup = append(filteredFilesGroup, filteredFiles)
-				filteredFiles = make(map[string]string)
-				idx = 0
-			}
+	for _, f := range r.Files {
+		if regexFilter.MatchString(f.Name) {
+			foundFiles[f.Id] = f.Name
 		}
 	}
 
-	if len(filteredFiles) > 0 {
-		filteredFilesGroup = append(filteredFilesGroup, filteredFiles)
-	}
 	return nil
+}
+
+func showFoundFiles() {
+	fmt.Printf("Found files (%d):\n", len(foundFiles))
+	num := 1
+	for _, name := range foundFiles {
+		fmt.Printf("%d. %s\n", num, name)
+		num++
+	}
 }
 
 func shouldDownload() bool {
@@ -178,7 +174,7 @@ func main() {
 		log.Fatalf("Unable to retrieve Drive client: %v", err)
 	}
 
-	re, err = regexp.Compile(os.Args[1])
+	regexFilter, err = regexp.Compile(os.Args[1])
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -188,33 +184,29 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if len(filteredFilesGroup) == 0 {
+
+	if len(foundFiles) == 0 {
 		fmt.Println("No such files")
 		return
 	}
 
-	fmt.Printf("Found files (%d):\n", totalMatchesCount)
-	num := 1
-	for _, files := range filteredFilesGroup {
-		for _, name := range files {
-			fmt.Printf("%d. %s\n", num, name)
-			num++
-		}
-	}
+	showFoundFiles()
 
 	if !shouldDownload() {
 		os.Exit(0)
 	}
 
-	for _, files := range filteredFilesGroup {
-		var wg sync.WaitGroup
-		for id, name := range files {
-			wg.Add(1)
-			go func(id string, name string) {
-				download(srv, id, name)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	for id, name := range foundFiles {
+		downloadQueue <- true
+		go func(id string, name string) {
+			download(srv, id, name)
+			<-downloadQueue
+			if len(downloadQueue) == 0 {
 				wg.Done()
-			}(id, name)
-		}
-		wg.Wait()
+			}
+		}(id, name)
 	}
+	wg.Wait()
 }
