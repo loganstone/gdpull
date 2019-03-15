@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,12 +11,21 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strings"
+	"sync"
 
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	drive "google.golang.org/api/drive/v3"
 )
+
+const maxGoroutineForDownload = 5
+
+var re *regexp.Regexp
+var srv *drive.Service
+var filteredFilesGroup []map[string]string
+var totalMatchesCount int
 
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
@@ -76,9 +86,12 @@ func init() {
 	if len(os.Args) < 2 {
 		log.Fatal("enter target file\n")
 	}
+	filteredFilesGroup = make([]map[string]string, 5)
+	totalMatchesCount = 0
 }
 
 func download(srv *drive.Service, id string, name string) error {
+	log.Printf("Download - %s\n", name)
 	resp, err := srv.Files.Get(id).Download()
 	if err != nil {
 		log.Println(err)
@@ -102,6 +115,51 @@ func download(srv *drive.Service, id string, name string) error {
 	return nil
 }
 
+func procPage(r *drive.FileList) error {
+	if len(r.Files) == 0 {
+		return errors.New("no files found")
+	}
+
+	filteredFiles := make(map[string]string)
+	idx := 0
+
+	for _, i := range r.Files {
+		if re.MatchString(i.Name) {
+			filteredFiles[i.Id] = i.Name
+			idx++
+			totalMatchesCount++
+			if idx == maxGoroutineForDownload {
+				filteredFilesGroup = append(filteredFilesGroup, filteredFiles)
+				filteredFiles = make(map[string]string)
+				idx = 0
+			}
+		}
+	}
+
+	if len(filteredFiles) > 0 {
+		filteredFilesGroup = append(filteredFilesGroup, filteredFiles)
+	}
+	return nil
+}
+
+func shouldDownload() bool {
+	var response string
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Do you want to download it? (y/n): ")
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatal(err)
+	}
+	response = strings.Trim(response, " \n")
+	if response != "y" && response != "n" {
+		return shouldDownload()
+	}
+	if response == "n" {
+		return false
+	}
+	return true
+}
+
 func main() {
 	b, err := ioutil.ReadFile("credentials.json")
 	if err != nil {
@@ -120,27 +178,43 @@ func main() {
 		log.Fatalf("Unable to retrieve Drive client: %v", err)
 	}
 
-	re, err := regexp.Compile(os.Args[1])
+	re, err = regexp.Compile(os.Args[1])
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	ctx := context.Background()
-	err = srv.Files.List().Pages(ctx, func(r *drive.FileList) error {
-		if len(r.Files) == 0 {
-			return errors.New("no files found")
-		}
-		for _, i := range r.Files {
-			if re.MatchString(i.Name) {
-				log.Println(i.Name)
-				if err := download(srv, i.Id, i.Name); err != nil {
-					continue
-				}
-			}
-		}
-		return nil
-	})
+	err = srv.Files.List().Pages(ctx, procPage)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if len(filteredFilesGroup) == 0 {
+		fmt.Println("No such files")
+		return
+	}
+
+	fmt.Printf("Found files (%d):\n", totalMatchesCount)
+	num := 1
+	for _, files := range filteredFilesGroup {
+		for _, name := range files {
+			fmt.Printf("%d. %s\n", num, name)
+			num++
+		}
+	}
+
+	if !shouldDownload() {
+		os.Exit(0)
+	}
+
+	for _, files := range filteredFilesGroup {
+		var wg sync.WaitGroup
+		for id, name := range files {
+			wg.Add(1)
+			go func(id string, name string) {
+				download(srv, id, name)
+				wg.Done()
+			}(id, name)
+		}
+		wg.Wait()
 	}
 }
