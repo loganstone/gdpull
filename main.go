@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -16,7 +15,6 @@ import (
 
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	drive "google.golang.org/api/drive/v3"
 )
 
@@ -156,16 +154,34 @@ func shouldDownload() bool {
 	return true
 }
 
-func main() {
-	b, err := ioutil.ReadFile("credentials.json")
-	if err != nil {
-		log.Fatalf("Unable to read client secret file: %v", err)
+func getConfig() (*oauth2.Config, error) {
+	const errMsgFmt = "'%s' environment variable is required"
+	clientID, ok := os.LookupEnv("GDPULL_CLIENT_ID")
+	if !ok {
+		return nil, fmt.Errorf(errMsgFmt, "GDPULL_CLIENT_ID")
 	}
 
-	// If modifying these scopes, delete your previously saved token.json.
-	config, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
+	clientSecret, ok := os.LookupEnv("GDPULL_CLIENT_SECRET")
+	if !ok {
+		return nil, fmt.Errorf(errMsgFmt, "GDPULL_CLIENT_SECRET")
+	}
+
+	return &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  "urn:ietf:wg:oauth:2.0:oob",
+		Scopes:       []string{drive.DriveReadonlyScope},
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://accounts.google.com/o/oauth2/auth",
+			TokenURL: "https://oauth2.googleapis.com/token",
+		},
+	}, nil
+}
+
+func main() {
+	config, err := getConfig()
 	if err != nil {
-		log.Fatalf("Unable to parse client secret file to config: %v", err)
+		log.Fatal(err)
 	}
 	client := getClient(config)
 
