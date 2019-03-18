@@ -1,4 +1,4 @@
-module github.com/loganstone/pull
+module github.com/loganstone/gdpull
 
 go 1.12
 
