@@ -9,6 +9,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/user"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -27,14 +29,18 @@ var downloadQueue chan bool
 
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
-	// The file token.json stores the user's access and refresh tokens, and is
+	// The file .gdpull stores the user's access and refresh tokens, and is
 	// created automatically when the authorization flow completes for the first
 	// time.
-	tokFile := "token.json"
-	tok, err := tokenFromFile(tokFile)
+	usr, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+	tokFilePath := filepath.Join(usr.HomeDir, ".gdpull")
+	tok, err := tokenFromFile(tokFilePath)
 	if err != nil {
 		tok = getTokenFromWeb(config)
-		saveToken(tokFile, tok)
+		saveToken(tokFilePath, tok)
 	}
 	return config.Client(context.Background(), tok)
 }
