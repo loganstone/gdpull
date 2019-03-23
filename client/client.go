@@ -7,17 +7,20 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 
 	"golang.org/x/oauth2"
 	drive "google.golang.org/api/drive/v3"
 )
 
 const (
-	redirectURL = "urn:ietf:wg:oauth:2.0:oob"
-	authURL     = "https://accounts.google.com/o/oauth2/auth"
-	tokenURL    = "https://oauth2.googleapis.com/token"
+	redirectURL   = "urn:ietf:wg:oauth:2.0:oob"
+	authURL       = "https://accounts.google.com/o/oauth2/auth"
+	tokenURL      = "https://oauth2.googleapis.com/token"
+	tokenFileName = ".gdpull"
 )
 
 // New is retrieve a token, saves the token, then returns the generated client and error.
@@ -34,7 +37,7 @@ func New() (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	tokFilePath := filepath.Join(usr.HomeDir, ".gdpull")
+	tokFilePath := filepath.Join(usr.HomeDir, tokenFileName)
 	tok, err := tokenFromFile(tokFilePath)
 	if err != nil {
 		tok = getTokenFromWeb(config)
@@ -46,6 +49,11 @@ func New() (*http.Client, error) {
 // Request a token from the web, then returns the retrieved token.
 func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+
+	if err := openWebBrowser(authURL); err != nil {
+		log.Fatal(err)
+	}
+
 	fmt.Printf("Go to the following link in your browser then type the "+
 		"authorization code: \n%v\n", authURL)
 
@@ -108,4 +116,21 @@ func getConfig() (*oauth2.Config, error) {
 			TokenURL: tokenURL,
 		},
 	}, nil
+}
+
+func openWebBrowser(url string) error {
+	var err error
+
+	switch runtime.GOOS {
+	case "linux":
+		err = exec.Command("xdg-open", url).Start()
+	case "windows":
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		err = exec.Command("open", url).Start()
+	default:
+		err = fmt.Errorf("unsupported platform")
+	}
+
+	return err
 }
