@@ -4,9 +4,11 @@ It was annoying to click and download from Google Drive
 
 ## Getting started
 
-### Install
+### Prerequisites
 
-* Install golang ;)
+* [Install golang](https://golang.org/doc/install) ;)
+
+### Install and run
 
 * Install `gdpull`
 
