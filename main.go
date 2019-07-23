@@ -31,7 +31,7 @@ func init() {
 	downloadQueue = make(chan bool, maxDownloadAtOnce)
 }
 
-func download(srv *drive.Service, id string, name string) error {
+func download(srv *drive.Service, id, name string) error {
 	log.Printf("Download - %s\n", name)
 	resp, err := srv.Files.Get(id).Download()
 	if err != nil {
@@ -134,7 +134,7 @@ func main() {
 	wg.Add(1)
 	for id, name := range foundFiles {
 		downloadQueue <- true
-		go func(id string, name string) {
+		go func(id, name string) {
 			download(srv, id, name)
 			<-downloadQueue
 			if len(downloadQueue) == 0 {
