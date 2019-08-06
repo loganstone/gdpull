@@ -22,6 +22,7 @@ var regexFilter *regexp.Regexp
 var srv *drive.Service
 var foundFiles map[string]string
 var downloadQueue chan bool
+var wg sync.WaitGroup
 
 func init() {
 	if len(os.Args) < 2 {
@@ -130,17 +131,16 @@ func main() {
 		os.Exit(0)
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(len(foundFiles))
+
 	for id, name := range foundFiles {
 		downloadQueue <- true
 		go func(id, name string) {
+			defer wg.Done()
 			download(srv, id, name)
 			<-downloadQueue
-			if len(downloadQueue) == 0 {
-				wg.Done()
-			}
 		}(id, name)
 	}
+
 	wg.Wait()
 }
